@@ -6,57 +6,49 @@ import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AuthService {
-  constructor(private usersService: UsersService, private jwtService: JwtService) {}
+  constructor(private readonly usersService: UsersService, private readonly jwtService: JwtService) {}
 
-  async validateUser(username: string, pass: string) {
-    const user = await this.usersService.findByUsername(username);
-    if (!user) return null;
-    const valid = await bcrypt.compare(pass, user.password);
-    if (valid) return { id: user.id, username: user.username, role: user.role };
-    return null;
+  async register(username: string, password: string) {
+    return this.usersService.createUser(username, password);
   }
 
-  async login(user: { id: number; username: string; role: string }) {
-    const payload = { sub: user.id, username: user.username, role: user.role };
-    const accessToken = this.jwtService.sign(payload);
-
-    // create refresh token using separate secret so you can revoke access by changing refresh secret
-    const refreshToken = jwt.sign(
-      payload,
-      process.env.JWT_REFRESH_TOKEN_SECRET || 'refresh_secret',
-      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions,
-    );
-
-    await this.usersService.setRefreshToken(user.id, refreshToken);
-
-    return { accessToken, refreshToken };
+  async login(username: string, password: string) {
+    const user = await this.usersService.findByUsername(username);
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new UnauthorizedException('Invalid username or password');
+    }
+    return this.issueTokens(user);
   }
 
   async logout(userId: number) {
     await this.usersService.setRefreshToken(userId, null);
-    return { ok: true };
   }
 
   async refreshTokens(refreshToken: string) {
     try {
-      const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET || 'refresh_secret');
-      const user = await this.usersService.findById(decoded.sub);
-      if (!user) throw new UnauthorizedException('Invalid refresh token');
-
-      const found = await this.usersService.findByRefreshToken(refreshToken);
-      if (!found) throw new UnauthorizedException('Invalid refresh token (not found)');
-
-      const payload = { sub: found.id, username: found.username, role: found.role };
-      const accessToken = this.jwtService.sign(payload);
-      const newRefresh = jwt.sign(
-        payload,
-        process.env.JWT_REFRESH_TOKEN_SECRET || 'refresh_secret',
-        { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions,
-      );
-      await this.usersService.setRefreshToken(found.id, newRefresh);
-      return { accessToken, refreshToken: newRefresh };
-    } catch (err) {
-      throw new UnauthorizedException('Could not refresh tokens');
+      const decoded = jwt.verify(refreshToken, this.refreshSecret()) as jwt.JwtPayload;
+      if (typeof decoded.sub !== 'number') throw new Error('Invalid token subject');
+      const user = await this.usersService.findByRefreshToken(refreshToken);
+      if (!user || user.id !== decoded.sub) throw new Error('Refresh token revoked');
+      return await this.issueTokens(user);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
     }
+  }
+
+  private async issueTokens(user: { id: number; username: string; role: string }) {
+    const payload = { sub: user.id, username: user.username, role: user.role };
+    const accessToken = this.jwtService.sign(payload);
+    const refreshToken = jwt.sign(payload, this.refreshSecret(), {
+      expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
+    } as jwt.SignOptions);
+    await this.usersService.setRefreshToken(user.id, refreshToken);
+    return { accessToken, refreshToken };
+  }
+
+  private refreshSecret() {
+    const secret = process.env.JWT_REFRESH_TOKEN_SECRET;
+    if (!secret || secret.length < 32) throw new Error('JWT_REFRESH_TOKEN_SECRET must be at least 32 characters');
+    return secret;
   }
 }

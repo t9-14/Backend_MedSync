@@ -1,30 +1,52 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import * as bcrypt from 'bcryptjs';
+import { createHash } from 'crypto';
+
+export interface UserRecord {
+  id: number;
+  username: string;
+  password: string;
+  role: string;
+}
 
 @Injectable()
 export class UsersService {
-  createUser(username: string, password: string) {
-    throw new Error('Method not implemented.');
-  }
   constructor(private readonly db: DatabaseService) {}
 
-  async findAll() {
-    return this.db.query('SELECT * FROM users'); //
+  async createUser(username: string, password: string) {
+    const hash = await bcrypt.hash(password, 12);
+    try {
+      const result: any = await this.db.query(
+        'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
+        [username, hash, 'Staff'],
+      );
+      return { id: result.insertId, username, role: 'Staff' };
+    } catch (error: any) {
+      if (error?.code === 'ER_DUP_ENTRY') throw new ConflictException('Username already exists');
+      throw error;
+    }
   }
 
-  async create(user: any) {
-    const { username, password, role, center_id } = user;
-    const sql = `INSERT INTO users (username, password, role, center_id) VALUES (?, ?, ?, ?)`; //[cite: 2]
-    return this.db.query(sql, [username, password, role, center_id]);
+  async findByUsername(username: string): Promise<UserRecord | null> {
+    const rows: any = await this.db.query(
+      'SELECT user_id AS id, username, password, role FROM users WHERE username = ? LIMIT 1',
+      [username],
+    );
+    return rows[0] ?? null;
   }
 
-  async update(id: number, user: any) {
-    const { username, role } = user;
-    const sql = `UPDATE users SET username = ?, role = ? WHERE user_id = ?`; //[cite: 2]
-    return this.db.query(sql, [username, role, id]);
+  async setRefreshToken(userId: number, token: string | null) {
+    const digest = token ? createHash('sha256').update(token).digest('hex') : null;
+    await this.db.query('UPDATE users SET refresh_token = ? WHERE user_id = ?', [digest, userId]);
   }
 
-  async remove(id: number) {
-    return this.db.query('DELETE FROM users WHERE user_id = ?', [id]); //[cite: 2]
+  async findByRefreshToken(token: string): Promise<Pick<UserRecord, 'id' | 'username' | 'role'> | null> {
+    const digest = createHash('sha256').update(token).digest('hex');
+    const rows: any = await this.db.query(
+      'SELECT user_id AS id, username, role FROM users WHERE refresh_token = ? LIMIT 1',
+      [digest],
+    );
+    return rows[0] ?? null;
   }
 }
