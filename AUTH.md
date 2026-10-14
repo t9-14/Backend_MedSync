@@ -32,3 +32,18 @@ Send the access token as a Bearer token to every route below. Create a medicine 
 - `GET /inventory-stocks` lists stock. Optional filters: `?center_id=1` and/or `&batch_id=1`.
 - `POST /inventory-stocks` accepts `{ "center_id": 1, "batch_id": 1, "quantity": 25 }`; quantity defaults to zero and cannot be negative.
 - `PUT /inventory-stocks/:id` accepts `{ "quantity": 20 }`. A nonzero stock record must be set to zero before it can be deleted with `DELETE /inventory-stocks/:id`.
+
+## Transfer and disposal API
+
+These routes also require a Bearer access token.
+
+- `GET /transfer-requests` and `GET /transfer-requests/:id` list or read requests.
+- `POST /transfer-requests` accepts `{ "source_center_id": 1, "destination_center_id": 2, "request_date": "2026-10-14" }`; status defaults to `Pending`.
+- `PUT /transfer-requests/:id` updates the request fields. Supported statuses are `Pending`, `Approved`, `Rejected`, `Completed`, and `Cancelled`. Only pending requests can be edited; only pending or cancelled requests can be deleted with `DELETE /transfer-requests/:id`. Deleting a request cascades to its transfer items.
+- `GET /transfer-items` and `GET /transfer-items?transfer_id=1` list items.
+- `POST /transfer-items` accepts `{ "transfer_id": 1, "batch_id": 1, "transfer_quantity": 5 }`. Transfer quantities must be positive, and items can only be changed while their request is pending.
+- `PUT /transfer-items/:id` updates `batch_id` and/or `transfer_quantity`; `DELETE /transfer-items/:id` deletes an item from a pending request.
+- `GET /disposal-certificates` and `GET /disposal-certificates/:id` read certificates.
+- `POST /disposal-certificates` accepts `{ "batch_id": 1, "disposal_date": "2026-10-14", "disposal_method": "Approved disposal" }`. `user_id` is derived from the access token, and a batch can have only one certificate. Certificates are read-only after creation.
+
+Transfer requests and items currently record and track requests; changing request status does not move or reserve stock. Disposal certificates record who documented a batch disposal; creating one does not change batch status or inventory quantities.
