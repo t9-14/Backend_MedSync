@@ -1,37 +1,18 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
+import { CreateMedicineBatchDto } from './dto/create-medicine-batch.dto';
 import { MedicineBatchesService } from './medicine-batches.service';
 
 @Controller('medicine-batches')
 export class MedicineBatchesController {
-  constructor(private readonly batchesService: MedicineBatchesService) {}
+  constructor(private readonly batches: MedicineBatchesService) {}
 
   @Get()
-  findAll(@Query('medicine_id') medicineId?: string) {
-    if (medicineId === undefined) return this.batchesService.findAll();
-    const parsedId = Number(medicineId);
-    if (!Number.isSafeInteger(parsedId) || parsedId < 1) {
-      throw new BadRequestException('medicine_id must be a positive integer');
-    }
-    return this.batchesService.findAll(parsedId);
+  list(@Req() request: any, @Query('centerId', new ParseUUIDPipe({ optional: true })) centerId?: string, @Query('medicineId', new ParseUUIDPipe({ optional: true })) medicineId?: string) {
+    return this.batches.list(request.supabase, centerId, medicineId);
   }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.batchesService.findOne(id);
-  }
-
+  @Roles('system_administrator', 'center_manager', 'inventory_staff')
   @Post()
-  create(@Body() body: any) {
-    return this.batchesService.create(body);
-  }
-
-  @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.batchesService.update(id, body);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.batchesService.remove(id);
-  }
+  create(@Req() request: any, @Body() input: CreateMedicineBatchDto) { return this.batches.create(request.supabase, input); }
 }

@@ -1,106 +1,37 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
-
-const statuses = new Set(['Pending', 'Approved', 'Rejected', 'Completed', 'Cancelled']);
-
-function positiveId(value: unknown, field: string): number {
-  const id = typeof value === 'number' ? value : Number(value);
-  if (!Number.isSafeInteger(id) || id < 1) throw new BadRequestException(`${field} must be a positive integer`);
-  return id;
-}
-
-function requestDate(value: unknown): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new BadRequestException('request_date must use YYYY-MM-DD format');
-  }
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-    throw new BadRequestException('request_date must be a valid calendar date');
-  }
-  return value;
-}
+import { Injectable } from '@nestjs/common';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { throwDatabaseError } from '../common/database-errors';
+import { CreateRedistributionRequestDto } from './dto/create-redistribution-request.dto';
 
 @Injectable()
 export class TransferRequestsService {
-  constructor(private readonly db: DatabaseService) {}
-
-  async findAll() {
-    return this.db.query(
-      'SELECT tr.transfer_id, tr.source_center_id, src.center_name AS source_center_name, tr.destination_center_id, dst.center_name AS destination_center_name, tr.request_date, tr.status FROM transfer_requests tr JOIN health_centers src ON src.center_id = tr.source_center_id JOIN health_centers dst ON dst.center_id = tr.destination_center_id ORDER BY tr.transfer_id',
-    );
+  async list(db: SupabaseClient, centerId?: string) {
+    let query = db.from('redistribution_requests').select(`
+      id,source_center_id,destination_center_id,requester_user_id,status,note,reviewed_by,reviewed_at,created_at,updated_at,
+      source:health_centers!redistribution_requests_source_center_id_fkey(name,barangay),
+      destination:health_centers!redistribution_requests_destination_center_id_fkey(name,barangay),
+      items:redistribution_items(id,batch_id,quantity,batch:medicine_batches(id,lot_number,expiration_date,medicine:medicines(generic_name,strength,dosage_form,unit)))
+    `).order('created_at', { ascending: false }).limit(100);
+    if (centerId) query = query.or(`source_center_id.eq.${centerId},destination_center_id.eq.${centerId}`);
+    const { data, error } = await query;
+    if (error) throwDatabaseError(error);
+    return data;
   }
 
-  async findOne(id: number) {
-    const rows: any = await this.db.query(
-      'SELECT tr.transfer_id, tr.source_center_id, src.center_name AS source_center_name, tr.destination_center_id, dst.center_name AS destination_center_name, tr.request_date, tr.status FROM transfer_requests tr JOIN health_centers src ON src.center_id = tr.source_center_id JOIN health_centers dst ON dst.center_id = tr.destination_center_id WHERE tr.transfer_id = ?',
-      [id],
-    );
-    if (!rows.length) throw new NotFoundException('Transfer request not found');
-    return rows[0];
+  async create(db: SupabaseClient, input: CreateRedistributionRequestDto) {
+    const { data, error } = await db.rpc('create_redistribution_request', {
+      p_source_center_id: input.sourceCenterId,
+      p_destination_center_id: input.destinationCenterId,
+      p_note: input.note?.trim() || null,
+      p_items: input.items.map((item) => ({ batch_id: item.batchId, quantity: item.quantity })),
+    });
+    if (error) throwDatabaseError(error);
+    return { id: data, status: 'pending' };
   }
 
-  async create(body: any) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new BadRequestException('Request body must be a JSON object');
-    }
-    const sourceId = positiveId(body.source_center_id, 'source_center_id');
-    const destinationId = positiveId(body.destination_center_id, 'destination_center_id');
-    if (sourceId === destinationId) throw new BadRequestException('Source and destination centers must be different');
-    const date = requestDate(body.request_date);
-    if (body.status !== undefined) throw new BadRequestException('New transfer requests always start as Pending');
-    await this.ensureCenterExists(sourceId);
-    await this.ensureCenterExists(destinationId);
-    const result: any = await this.db.query(
-      'INSERT INTO transfer_requests (source_center_id, destination_center_id, request_date, status) VALUES (?, ?, ?, ?)',
-      [sourceId, destinationId, date, 'Pending'],
-    );
-    return this.findOne(result.insertId);
-  }
-
-  async update(id: number, body: any) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new BadRequestException('Request body must be a JSON object');
-    }
-    const current = await this.findOne(id);
-    if (current.status !== 'Pending') throw new ConflictException('Only pending transfer requests can be edited');
-
-    const sourceId = body.source_center_id === undefined ? current.source_center_id : positiveId(body.source_center_id, 'source_center_id');
-    const destinationId = body.destination_center_id === undefined ? current.destination_center_id : positiveId(body.destination_center_id, 'destination_center_id');
-    if (sourceId === destinationId) throw new BadRequestException('Source and destination centers must be different');
-    const date = body.request_date === undefined ? current.request_date : requestDate(body.request_date);
-    const status = body.status === undefined ? current.status : this.validateStatus(body.status);
-    if (sourceId !== current.source_center_id || destinationId !== current.destination_center_id) {
-      const items: any = await this.db.query('SELECT item_id FROM transfer_items WHERE transfer_id = ? LIMIT 1', [id]);
-      if (items.length) throw new ConflictException('Remove transfer items before changing the source or destination');
-    }
-    await this.ensureCenterExists(sourceId);
-    await this.ensureCenterExists(destinationId);
-    await this.db.query(
-      'UPDATE transfer_requests SET source_center_id = ?, destination_center_id = ?, request_date = ?, status = ? WHERE transfer_id = ?',
-      [sourceId, destinationId, date, status, id],
-    );
-    return this.findOne(id);
-  }
-
-  async remove(id: number) {
-    const request = await this.findOne(id);
-    if (request.status !== 'Pending' && request.status !== 'Cancelled') {
-      throw new ConflictException('Only pending or cancelled transfer requests can be deleted');
-    }
-    await this.db.query('DELETE FROM transfer_requests WHERE transfer_id = ?', [id]);
-    return { ok: true };
-  }
-
-  private validateStatus(value: unknown): string {
-    if (typeof value !== 'string' || !statuses.has(value)) {
-      throw new BadRequestException('status must be Pending, Approved, Rejected, Completed, or Cancelled');
-    }
-    return value;
-  }
-
-  private async ensureCenterExists(centerId: number) {
-    const rows: any = await this.db.query('SELECT center_id FROM health_centers WHERE center_id = ?', [centerId]);
-    if (!rows.length) throw new NotFoundException('Health center not found');
+  async transition(db: SupabaseClient, requestId: string, action: string) {
+    const { error } = await db.rpc('transition_redistribution_request', { p_request_id: requestId, p_action: action });
+    if (error) throwDatabaseError(error);
+    return { id: requestId, status: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action === 'fulfill' ? 'fulfilled' : 'cancelled' };
   }
 }

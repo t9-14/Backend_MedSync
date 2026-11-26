@@ -1,42 +1,21 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
+import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { InventoryStocksService } from './inventory-stocks.service';
 
-function optionalPositiveId(value: string | undefined, field: string): number | undefined {
-  if (value === undefined) return undefined;
-  const id = Number(value);
-  if (!Number.isSafeInteger(id) || id < 1) throw new BadRequestException(`${field} must be a positive integer`);
-  return id;
-}
-
-@Controller('inventory-stocks')
+@Controller()
 export class InventoryStocksController {
-  constructor(private readonly stocksService: InventoryStocksService) {}
+  constructor(private readonly inventory: InventoryStocksService) {}
 
-  @Get()
-  findAll(@Query('center_id') centerId?: string, @Query('batch_id') batchId?: string) {
-    return this.stocksService.findAll(
-      optionalPositiveId(centerId, 'center_id'),
-      optionalPositiveId(batchId, 'batch_id'),
-    );
-  }
+  @Get('inventory-stocks')
+  list(@Req() request: any, @Query('centerId', new ParseUUIDPipe({ optional: true })) centerId?: string) { return this.inventory.list(request.supabase, centerId); }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.stocksService.findOne(id);
-  }
+  @Get('stock-transactions')
+  transactions(@Req() request: any, @Query('centerId', new ParseUUIDPipe({ optional: true })) centerId?: string) { return this.inventory.transactions(request.supabase, centerId); }
 
-  @Post()
-  create(@Body() body: any) {
-    return this.stocksService.create(body);
-  }
-
-  @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.stocksService.update(id, body);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.stocksService.remove(id);
+  @Roles('system_administrator', 'center_manager', 'inventory_staff')
+  @Post('stock-transactions')
+  createTransaction(@Req() request: any, @Body() input: CreateStockTransactionDto) {
+    return this.inventory.createTransaction(request.supabase, input);
   }
 }

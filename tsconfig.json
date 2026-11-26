@@ -10,5 +10,14 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/transfer-items/**",
+    "src/disposal-certificates/**",
+    "src/auth/auth.service.ts",
+    "src/auth/jwt-strategy.ts",
+    "src/auth/jwt-auth.guard.ts"
+  ]
 }

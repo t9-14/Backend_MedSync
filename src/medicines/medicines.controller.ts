@@ -1,19 +1,16 @@
-import { Controller, Get, Post, Body, Put, Param, Delete } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
+import { CreateMedicineDto } from './dto/create-medicine.dto';
 import { MedicinesService } from './medicines.service';
 
 @Controller('medicines')
 export class MedicinesController {
-  constructor(private readonly medicinesService: MedicinesService) {}
+  constructor(private readonly medicines: MedicinesService) {}
 
   @Get()
-  findAll() { return this.medicinesService.findAll(); }
+  list(@Req() request: any, @Query('search') search?: string) { return this.medicines.list(request.supabase, search); }
 
+  @Roles('system_administrator')
   @Post()
-  create(@Body() medicine: any) { return this.medicinesService.create(medicine); }
-
-  @Put(':id')
-  update(@Param('id') id: string, @Body() medicine: any) { return this.medicinesService.update(+id, medicine); }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) { return this.medicinesService.remove(+id); }
+  create(@Req() request: any, @Body() input: CreateMedicineDto) { return this.medicines.create(request.supabase, input); }
 }

@@ -1,52 +1,37 @@
-import { ConflictException, Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
-import * as bcrypt from 'bcryptjs';
-import { createHash } from 'crypto';
-
-export interface UserRecord {
-  id: number;
-  username: string;
-  password: string;
-  role: string;
-}
+import { Injectable } from '@nestjs/common';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { throwDatabaseError } from '../common/database-errors';
+import { SetCenterMembershipDto } from './dto/set-center-membership.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly db: DatabaseService) {}
-
-  async createUser(username: string, password: string) {
-    const hash = await bcrypt.hash(password, 12);
-    try {
-      const result: any = await this.db.query(
-        'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-        [username, hash, 'Staff'],
-      );
-      return { id: result.insertId, username, role: 'Staff' };
-    } catch (error: any) {
-      if (error?.code === 'ER_DUP_ENTRY') throw new ConflictException('Username already exists');
-      throw error;
-    }
+  async profiles(db: SupabaseClient) {
+    const { data, error } = await db.from('profiles').select('user_id,full_name,account_status,created_at').order('full_name').limit(200);
+    if (error) throwDatabaseError(error);
+    return data;
   }
 
-  async findByUsername(username: string): Promise<UserRecord | null> {
-    const rows: any = await this.db.query(
-      'SELECT user_id AS id, username, password, role FROM users WHERE username = ? LIMIT 1',
-      [username],
-    );
-    return rows[0] ?? null;
+  async updateProfileName(db: SupabaseClient, userId: string, fullName: string) {
+    const { error } = await db.rpc('admin_update_profile_name', { p_user_id: userId, p_full_name: fullName });
+    if (error) throwDatabaseError(error);
+    return { userId, fullName: fullName.trim() };
   }
 
-  async setRefreshToken(userId: number, token: string | null) {
-    const digest = token ? createHash('sha256').update(token).digest('hex') : null;
-    await this.db.query('UPDATE users SET refresh_token = ? WHERE user_id = ?', [digest, userId]);
+  async memberships(db: SupabaseClient, centerId?: string) {
+    let query = db.from('center_memberships')
+      .select('id,user_id,center_id,role,status,created_at,profile:profiles!center_memberships_user_id_fkey(full_name,account_status),center:health_centers!center_memberships_center_id_fkey(name,barangay)')
+      .order('created_at', { ascending: false }).limit(200);
+    if (centerId) query = query.eq('center_id', centerId);
+    const { data, error } = await query;
+    if (error) throwDatabaseError(error);
+    return data;
   }
 
-  async findByRefreshToken(token: string): Promise<Pick<UserRecord, 'id' | 'username' | 'role'> | null> {
-    const digest = createHash('sha256').update(token).digest('hex');
-    const rows: any = await this.db.query(
-      'SELECT user_id AS id, username, role FROM users WHERE refresh_token = ? LIMIT 1',
-      [digest],
-    );
-    return rows[0] ?? null;
+  async setMembership(db: SupabaseClient, input: SetCenterMembershipDto) {
+    const { data, error } = await db.rpc('set_center_membership', {
+      p_center_id: input.centerId, p_user_id: input.userId, p_role: input.role, p_status: input.status ?? 'active',
+    });
+    if (error) throwDatabaseError(error);
+    return { id: data, centerId: input.centerId, userId: input.userId, role: input.role, status: input.status ?? 'active' };
   }
 }

@@ -1,49 +1,55 @@
-# Authentication setup
+# MedSync API and setup
 
-Copy `.env.example` to `.env` and set the MySQL connection details plus two different random JWT secrets of at least 32 characters. Do not commit `.env`.
+The active API is a NestJS REST service over Supabase Auth and PostgreSQL. Normal queries use a Supabase client carrying the caller's access token, so existing row-level security applies. The API does not use a service-role key or issue its own access tokens.
 
-For Aiven, set `DB_SSL=true`, use the Aiven host, port, user, password, and database name, and provide the downloaded CA certificate path in `DB_SSL_CA_PATH`. The API requires this certificate and verifies it; TLS certificate validation stays enabled.
+## One-time database setup
 
-Keep a local CA certificate at `.certs/aiven-ca.pem` (this directory is ignored by Git) and set `DB_SSL_CA_PATH=.certs/aiven-ca.pem` in `.env`.
+The existing identity and organization migration remains the foundation. Apply `frontend/supabase/migrations/20261124000100_inventory_redistribution.sql` once, after `20261122000100_identity_organization.sql`, using the Supabase SQL Editor or your normal migration workflow. It is additive and does not delete or reset existing data. This repository cannot apply it to the hosted project automatically because no database-owner credential is configured in the backend.
 
-For a new, empty database, apply [`migrations/001_initial_schema.sql`](./migrations/001_initial_schema.sql) once using the Aiven SQL console or a MySQL client. It creates the health center, user, medicine, inventory, transfer, and disposal tables, including a unique username index. Do not apply it blindly to an existing schema; `CREATE TABLE IF NOT EXISTS` leaves existing tables unchanged.
-
-The MySQL `users` table must contain `user_id`, `username`, `password`, `role`, and nullable `refresh_token` columns. `username` needs a unique index so concurrent duplicate registrations are rejected by MySQL. `password` must hold bcrypt hashes (allow at least 60 characters). The `refresh_token` column stores only a SHA-256 digest; allow at least 64 characters. If an existing table does not yet have `refresh_token`, add it with:
+Promote the first system administrator through the Supabase SQL Editor as the trusted database owner. Replace the email with the existing Auth user's email:
 
 ```sql
-ALTER TABLE users ADD COLUMN refresh_token CHAR(64) NULL;
+INSERT INTO public.system_administrators(user_id)
+SELECT id FROM auth.users WHERE lower(email) = lower('admin@example.com')
+ON CONFLICT (user_id) DO NOTHING;
 ```
 
-Start the API with `npm run start:dev`. Register with `POST /auth/register` using `username` and `password`, then log in with `POST /auth/login`. Send the returned access token as `Authorization: Bearer <accessToken>` for protected routes. Refresh with `POST /auth/refresh` and the returned `refreshToken`; each refresh rotates and invalidates the prior token. `POST /auth/logout` requires a bearer access token and revokes the currently stored refresh token for that user.
+Users can register from the frontend's `/signup` route. The Auth trigger creates their profile and records the supplied display name. New users receive no role until an administrator assigns a center membership. A center manager can assign or suspend inventory staff at their own center; center managers cannot grant manager or administrator roles. User account suspension remains managed in Supabase Auth.
 
-## Render deployment
+## Configuration
 
-Set the Render build command to `npm ci && npm run build` and the start command to `npm start`. Configure `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL=true`, `DB_SSL_CA` (the PEM contents of the Aiven CA certificate), `JWT_ACCESS_TOKEN_SECRET`, and `JWT_REFRESH_TOKEN_SECRET` in the Render environment. Use different JWT secrets of at least 32 characters. Render provides `PORT` automatically. Do not configure the service start command as `node run start:dev`.
+Copy `.env.example` to `.env`. Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the same Supabase project URL and publishable/anon key used by the frontend's `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The local ignored backend `.env` has been populated from those frontend settings. Never put a Supabase service-role key in frontend code or logs.
 
-The root health response remains public. Registration, login, and refresh are public routes; refresh still requires a valid, unrevoked refresh token in its request body. All NestJS application data routes require a valid access token. Public registration always assigns the ordinary `Staff` role used by the provided schema.
+`CORS_ORIGINS` is a comma-separated allowlist and defaults to `http://localhost:3000,http://127.0.0.1:3000`. `PORT` defaults to `3001`; `HOST` defaults to `0.0.0.0`. The frontend API helper defaults to `http://localhost:3001`; set `NEXT_PUBLIC_API_URL` for a deployed API.
 
-## Inventory API
+## Authentication and authorization
 
-Send the access token as a Bearer token to every route below. Create a medicine and a health center first, then create a batch for the medicine, and create a stock record for a health center and batch.
+Send the Supabase access token as `Authorization: Bearer <access-token>`. The global access-token guard validates the token with Supabase Auth, then resolves the active profile, administrator assignment, and active center memberships using that same user's token. The global role guard supports `system_administrator`, `center_manager`, and `inventory_staff`. Database RPCs check the specific center role again before any privileged write.
 
-- `GET /medicine-batches` lists batches. Optional filter: `?medicine_id=1`.
-- `POST /medicine-batches` accepts `{ "medicine_id": 1, "lot_number": "LOT-001", "expiration_date": "2027-12-31", "status": "Active" }`. `status` is optional and defaults to `Active`.
-- `GET /medicine-batches/:id`, `PUT /medicine-batches/:id`, and `DELETE /medicine-batches/:id` read, update, and delete a batch. A batch referenced by stock, transfer, or disposal records cannot be deleted.
-- `GET /inventory-stocks` lists stock. Optional filters: `?center_id=1` and/or `&batch_id=1`.
-- `POST /inventory-stocks` accepts `{ "center_id": 1, "batch_id": 1, "quantity": 25 }`; quantity defaults to zero and cannot be negative.
-- `PUT /inventory-stocks/:id` accepts `{ "quantity": 20 }`. A nonzero stock record must be set to zero before it can be deleted with `DELETE /inventory-stocks/:id`.
+## Active endpoints
 
-## Transfer and disposal API
+- `GET /health`: public process health.
+- `GET /auth/me`: verified user, roles, and active center memberships.
+- `GET /health-centers`; `POST /health-centers` (administrator); `PATCH /health-centers/:id/status` (administrator).
+- `GET /profiles` and `GET /center-memberships`; `POST /center-memberships` to assign or suspend a role through the existing permission-checked RPC.
+- `GET /medicines`; `POST /medicines` (administrator).
+- `GET /medicine-batches?centerId=<uuid>&medicineId=<uuid>`; `POST /medicine-batches`.
+- `GET /inventory-stocks?centerId=<uuid>` and `GET /stock-transactions?centerId=<uuid>`; `POST /stock-transactions` for stock-in, stock-out, and adjustments.
+- `GET /redistribution-requests?centerId=<uuid>`; `POST /redistribution-requests`; `PATCH /redistribution-requests/:id/status` with `approve`, `reject`, `cancel`, or `fulfill`.
 
-These routes also require a Bearer access token.
+Stock balances and audit entries are written together in PostgreSQL functions. Fulfillment locks and checks source stock, moves each requested batch, records both sides of the transfer, and updates request status in one transaction. Expired batches cannot be received, issued, requested, or transferred. Requests do not reserve stock while pending or approved; fulfillment returns an error if available stock has changed.
 
-- `GET /transfer-requests` and `GET /transfer-requests/:id` list or read requests.
-- `POST /transfer-requests` accepts `{ "source_center_id": 1, "destination_center_id": 2, "request_date": "2026-10-14" }`; status defaults to `Pending`.
-- `PUT /transfer-requests/:id` updates the request fields. Supported statuses are `Pending`, `Approved`, `Rejected`, `Completed`, and `Cancelled`. Only pending requests can be edited; only pending or cancelled requests can be deleted with `DELETE /transfer-requests/:id`. Deleting a request cascades to its transfer items.
-- `GET /transfer-items` and `GET /transfer-items?transfer_id=1` list items.
-- `POST /transfer-items` accepts `{ "transfer_id": 1, "batch_id": 1, "transfer_quantity": 5 }`. Transfer quantities must be positive, and items can only be changed while their request is pending.
-- `PUT /transfer-items/:id` updates `batch_id` and/or `transfer_quantity`; `DELETE /transfer-items/:id` deletes an item from a pending request.
-- `GET /disposal-certificates` and `GET /disposal-certificates/:id` read certificates.
-- `POST /disposal-certificates` accepts `{ "batch_id": 1, "disposal_date": "2026-10-14", "disposal_method": "Approved disposal" }`. `user_id` is derived from the access token, and a batch can have only one certificate. Certificates are read-only after creation.
+The legacy MySQL inventory migration and unused transfer-item/disposal code remain in the repository but are not registered as active API modules. They are not part of the Supabase-backed workflow.
 
-Transfer requests and items currently record and track requests; changing request status does not move or reserve stock. Disposal certificates record who documented a batch disposal; creating one does not change batch status or inventory quantities.
+## Run locally
+
+```powershell
+cd backend
+npm install
+npm run start:dev
+```
+
+```powershell
+cd frontend
+npm run dev
+```

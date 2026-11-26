@@ -1,27 +1,27 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { throwDatabaseError } from '../common/database-errors';
+import { CreateHealthCenterDto } from './dto/create-health-center.dto';
 
 @Injectable()
 export class HealthCentersService {
-  constructor(private readonly db: DatabaseService) {}
-
-  async findAll() {
-    return this.db.query('SELECT * FROM health_centers'); //[cite: 2]
+  async list(db: SupabaseClient) {
+    const { data, error } = await db.from('health_centers').select('id,name,barangay,contact_number,status,created_at').order('name').limit(200);
+    if (error) throwDatabaseError(error);
+    return data;
   }
 
-  async create(center: any) {
-    const { center_name, barangay, contact_number } = center;
-    const sql = `INSERT INTO health_centers (center_name, barangay, contact_number) VALUES (?, ?, ?)`; //[cite: 2]
-    return this.db.query(sql, [center_name, barangay, contact_number]);
+  async create(db: SupabaseClient, input: CreateHealthCenterDto) {
+    const { data, error } = await db.rpc('create_health_center', {
+      p_name: input.name.trim(), p_barangay: input.barangay.trim(), p_contact_number: input.contactNumber?.trim() || null,
+    });
+    if (error) throwDatabaseError(error);
+    return { id: data };
   }
 
-  async update(id: number, center: any) {
-    const { center_name, contact_number } = center;
-    const sql = `UPDATE health_centers SET center_name = ?, contact_number = ? WHERE center_id = ?`; //[cite: 2]
-    return this.db.query(sql, [center_name, contact_number, id]);
-  }
-
-  async remove(id: number) {
-    return this.db.query('DELETE FROM health_centers WHERE center_id = ?', [id]); //[cite: 2]
+  async setStatus(db: SupabaseClient, centerId: string, status: string) {
+    const { error } = await db.rpc('set_health_center_status', { p_center_id: centerId, p_status: status });
+    if (error) throwDatabaseError(error);
+    return { id: centerId, status };
   }
 }

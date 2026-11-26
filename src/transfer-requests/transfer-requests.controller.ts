@@ -1,24 +1,23 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
+import { CreateRedistributionRequestDto } from './dto/create-redistribution-request.dto';
+import { RedistributionActionDto } from './dto/redistribution-action.dto';
 import { TransferRequestsService } from './transfer-requests.service';
 
-@Controller('transfer-requests')
+@Controller('redistribution-requests')
 export class TransferRequestsController {
-  constructor(private readonly transferRequestsService: TransferRequestsService) {}
+  constructor(private readonly requests: TransferRequestsService) {}
 
   @Get()
-  findAll() { return this.transferRequestsService.findAll(); }
+  list(@Req() request: any, @Query('centerId', new ParseUUIDPipe({ optional: true })) centerId?: string) { return this.requests.list(request.supabase, centerId); }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) { return this.transferRequestsService.findOne(id); }
-
+  @Roles('system_administrator', 'center_manager', 'inventory_staff')
   @Post()
-  create(@Body() body: any) { return this.transferRequestsService.create(body); }
+  create(@Req() request: any, @Body() input: CreateRedistributionRequestDto) { return this.requests.create(request.supabase, input); }
 
-  @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.transferRequestsService.update(id, body);
+  @Roles('system_administrator', 'center_manager', 'inventory_staff')
+  @Patch(':id/status')
+  transition(@Req() request: any, @Param('id', ParseUUIDPipe) id: string, @Body() input: RedistributionActionDto) {
+    return this.requests.transition(request.supabase, id, input.action);
   }
-
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) { return this.transferRequestsService.remove(id); }
 }
