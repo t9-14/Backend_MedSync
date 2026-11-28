@@ -1,23 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { throwDatabaseError } from '../common/database-errors';
+import { fetchAllRows } from '../common/fetch-all-rows';
 import { CreateMedicineBatchDto } from './dto/create-medicine-batch.dto';
 
 @Injectable()
 export class MedicineBatchesService {
   async list(db: SupabaseClient, centerId?: string, medicineId?: string) {
-    let query = db.from('medicine_batches').select('id,medicine_id,lot_number,expiration_date,status,created_at,medicine:medicines(generic_name,strength,dosage_form,unit)').order('expiration_date').limit(100);
+    let query = db.from('medicine_batches').select('id,medicine_id,lot_number,expiration_date,status,created_at,medicine:medicines(generic_name,strength,dosage_form,unit)').order('expiration_date');
     if (medicineId) query = query.eq('medicine_id', medicineId);
     if (centerId) {
-      const { data: stock, error: stockError } = await db.from('inventory_stocks').select('batch_id').eq('center_id', centerId);
-      if (stockError) throwDatabaseError(stockError);
+      const stock = await fetchAllRows(db.from('inventory_stocks').select('batch_id').eq('center_id', centerId));
       const ids = stock?.map((row) => row.batch_id) ?? [];
       if (!ids.length) return [];
       query = query.in('id', ids);
     }
-    const { data, error } = await query;
-    if (error) throwDatabaseError(error);
-    return data;
+    return fetchAllRows(query);
   }
 
   async create(db: SupabaseClient, input: CreateMedicineBatchDto) {

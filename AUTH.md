@@ -4,7 +4,7 @@ The active API is a NestJS REST service over Supabase Auth and PostgreSQL. Norma
 
 ## One-time database setup
 
-The existing identity and organization migration remains the foundation. Apply `frontend/supabase/migrations/20261124000100_inventory_redistribution.sql` once, after `20261122000100_identity_organization.sql`, using the Supabase SQL Editor or your normal migration workflow. It is additive and does not delete or reset existing data. This repository cannot apply it to the hosted project automatically because no database-owner credential is configured in the backend.
+Apply migrations in order: `20261122000100_identity_organization.sql`, `20261124000100_inventory_redistribution.sql`, `20261126000100_admin_update_profile_name.sql`, and `20261127000100_stock_request_direction.sql`. The last migration fixes redistribution to work as a request from the receiving center, and also enables center managers to find active unassigned profiles for staff assignment. These migrations are additive and do not delete or reset existing data. The repository cannot apply them to the hosted project automatically because no database-owner credential is configured in the backend.
 
 Promote the first system administrator through the Supabase SQL Editor as the trusted database owner. Replace the email with the existing Auth user's email:
 
@@ -35,7 +35,7 @@ Send the Supabase access token as `Authorization: Bearer <access-token>`. The gl
 - `GET /medicines`; `POST /medicines` (administrator).
 - `GET /medicine-batches?centerId=<uuid>&medicineId=<uuid>`; `POST /medicine-batches`.
 - `GET /inventory-stocks?centerId=<uuid>` and `GET /stock-transactions?centerId=<uuid>`; `POST /stock-transactions` for stock-in, stock-out, and adjustments.
-- `GET /redistribution-requests?centerId=<uuid>`; `POST /redistribution-requests`; `PATCH /redistribution-requests/:id/status` with `approve`, `reject`, `cancel`, or `fulfill`.
+- `GET /redistribution-requests?centerId=<uuid>`; `GET /redistribution-requests/stock-availability?centerId=<uuid>`; `POST /redistribution-requests`; `PATCH /redistribution-requests/:id/status` with `approve`, `reject`, `cancel`, or `fulfill`.
 
 Stock balances and audit entries are written together in PostgreSQL functions. Fulfillment locks and checks source stock, moves each requested batch, records both sides of the transfer, and updates request status in one transaction. Expired batches cannot be received, issued, requested, or transferred. Requests do not reserve stock while pending or approved; fulfillment returns an error if available stock has changed.
 

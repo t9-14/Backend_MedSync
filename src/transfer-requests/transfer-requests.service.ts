@@ -1,21 +1,26 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { throwDatabaseError } from '../common/database-errors';
+import { fetchAllRows } from '../common/fetch-all-rows';
 import { CreateRedistributionRequestDto } from './dto/create-redistribution-request.dto';
 
 @Injectable()
 export class TransferRequestsService {
+  async stockAvailability(db: SupabaseClient, centerId: string) {
+    const { data, error } = await db.rpc('list_redistribution_stock', { p_center_id: centerId });
+    if (error) throwDatabaseError(error);
+    return data;
+  }
+
   async list(db: SupabaseClient, centerId?: string) {
     let query = db.from('redistribution_requests').select(`
       id,source_center_id,destination_center_id,requester_user_id,status,note,reviewed_by,reviewed_at,created_at,updated_at,
       source:health_centers!redistribution_requests_source_center_id_fkey(name,barangay),
       destination:health_centers!redistribution_requests_destination_center_id_fkey(name,barangay),
       items:redistribution_items(id,batch_id,quantity,batch:medicine_batches(id,lot_number,expiration_date,medicine:medicines(generic_name,strength,dosage_form,unit)))
-    `).order('created_at', { ascending: false }).limit(100);
+    `).order('created_at', { ascending: false });
     if (centerId) query = query.or(`source_center_id.eq.${centerId},destination_center_id.eq.${centerId}`);
-    const { data, error } = await query;
-    if (error) throwDatabaseError(error);
-    return data;
+    return fetchAllRows(query);
   }
 
   async create(db: SupabaseClient, input: CreateRedistributionRequestDto) {

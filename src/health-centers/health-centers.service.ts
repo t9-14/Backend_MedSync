@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { throwDatabaseError } from '../common/database-errors';
+import { fetchAllRows } from '../common/fetch-all-rows';
 import { CreateHealthCenterDto } from './dto/create-health-center.dto';
 
 @Injectable()
 export class HealthCentersService {
   async list(db: SupabaseClient) {
-    const { data, error } = await db.from('health_centers').select('id,name,barangay,contact_number,status,created_at').order('name').limit(200);
-    if (error) throwDatabaseError(error);
-    return data;
+    const query = db.from('health_centers').select('id,name,barangay,contact_number,status,created_at').order('name');
+    return fetchAllRows(query);
   }
 
   async create(db: SupabaseClient, input: CreateHealthCenterDto) {

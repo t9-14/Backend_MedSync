@@ -11,6 +11,9 @@ export class TransferRequestsController {
   @Get()
   list(@Req() request: any, @Query('centerId', new ParseUUIDPipe({ optional: true })) centerId?: string) { return this.requests.list(request.supabase, centerId); }
 
+  @Get('stock-availability')
+  stockAvailability(@Req() request: any, @Query('centerId', ParseUUIDPipe) centerId: string) { return this.requests.stockAvailability(request.supabase, centerId); }
+
   @Roles('system_administrator', 'center_manager', 'inventory_staff')
   @Post()
   create(@Req() request: any, @Body() input: CreateRedistributionRequestDto) { return this.requests.create(request.supabase, input); }

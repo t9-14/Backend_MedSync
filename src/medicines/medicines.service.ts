@@ -1,17 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { throwDatabaseError } from '../common/database-errors';
+import { fetchAllRows } from '../common/fetch-all-rows';
 import { CreateMedicineDto } from './dto/create-medicine.dto';
 
 @Injectable()
 export class MedicinesService {
   async list(db: SupabaseClient, search?: string) {
-    let query = db.from('medicines').select('id,generic_name,strength,dosage_form,category,unit,status,created_at').order('generic_name').limit(100);
+    let query = db.from('medicines').select('id,generic_name,strength,dosage_form,category,unit,status,created_at').order('generic_name');
     const term = search?.trim().replace(/[%,()]/g, '');
     if (term) query = query.ilike('generic_name', `%${term}%`);
-    const { data, error } = await query;
-    if (error) throwDatabaseError(error);
-    return data;
+    return fetchAllRows(query);
   }
 
   async create(db: SupabaseClient, input: CreateMedicineDto) {
